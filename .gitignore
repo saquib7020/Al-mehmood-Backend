@@ -1,0 +1,33 @@
+# Node.js
+node_modules/
+.env
+*.log
+npm-debug.log*
+
+# Optional OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+logs
+*.log
+logs/*.log
+
+# Images folder (only if you store generated content and not static assets)
+# Uncomment if you don’t want to track uploaded images
+# images/
+
+# IDEs
+.vscode/
+.idea/
+
+# Build artifacts
+dist/
+build/
+
+# Temp files
+*.tmp
+*.swp
+
+# coverage reports
+coverage/
