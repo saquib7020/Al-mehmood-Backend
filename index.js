@@ -4,7 +4,7 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const cors = require('cors');
-const GalleryItem = require('./Models/GalleryModel');
+const StudentArtwork = require('./Models/GalleryModel');
 const Announcement = require('./Models/AnnouncementModel');
 const ContactMessage = require('./Models/ContactMessage');
 const mongoose = require('mongoose');
@@ -12,6 +12,7 @@ const Slide=require('./Models/SlideModel')
 const Artwork=require('./Models/Artwork')
 const app = express();
 const PORT = process.env.PORT || 5000;
+const Journey=require('./Models/Journey')
 require('dotenv').config();
 
 app.use('/images', express.static(path.join(__dirname, 'images')));
@@ -43,47 +44,170 @@ const upload = multer({ storage });
 
 // Create
 app.post('/api/gallery', upload.single('image'), async (req, res) => {
-  const { title, subtitle, description, buttonText } = req.body;
-  const imageUrl = `${process.env.BASE_URL}/images/${req.file.filename}`;
-  const newItem = new GalleryItem({ image: imageUrl, title, subtitle, description, buttonText });
-  await newItem.save();
-  res.status(201).json({ message: 'Gallery item uploaded', item: newItem });
+  try {
+    const { title, artist, grade, category, description, award } = req.body;
+    
+    if (!req.file) {
+      return res.status(400).json({ message: 'Image file is required' });
+    }
+    
+    const imageUrl = `${process.env.BASE_URL}/images/${req.file.filename}`;
+    
+    const newArtwork = new StudentArtwork({
+      title,
+      artist,
+      grade,
+      category,
+      imageUrl,
+      description,
+      award: award || '',
+      views: 0,
+      likes: 0
+    });
+    
+    await newArtwork.save();
+    res.status(201).json({ 
+      message: 'Artwork uploaded successfully', 
+      artwork: newArtwork 
+    });
+  } catch (error) {
+    console.error('Error uploading artwork:', error);
+    res.status(500).json({ message: 'Failed to upload artwork' });
+  }
 });
 
-// Read
+// READ - Get all artworks
 app.get('/api/gallery', async (req, res) => {
-  const items = await GalleryItem.find({});
-  res.json(items);
+  try {
+    const artworks = await StudentArtwork.find({}).sort({ createdAt: -1 });
+    res.json(artworks);
+  } catch (error) {
+    console.error('Error fetching artworks:', error);
+    res.status(500).json({ message: 'Failed to fetch artworks' });
+  }
 });
 
-// Update
+// READ - Get single artwork by ID
+app.get('/api/gallery/:id', async (req, res) => {
+  try {
+    const artwork = await StudentArtwork.findById(req.params.id);
+    if (!artwork) {
+      return res.status(404).json({ message: 'Artwork not found' });
+    }
+    res.json(artwork);
+  } catch (error) {
+    console.error('Error fetching artwork:', error);
+    res.status(500).json({ message: 'Failed to fetch artwork' });
+  }
+});
+
+// UPDATE - Update artwork
 app.put('/api/gallery/:id', async (req, res) => {
   try {
-    const updated = await GalleryItem.findByIdAndUpdate(req.params.id, req.body, { new: true });
-    if (!updated) return res.status(404).json({ message: 'Item not found' });
-    res.json(updated);
-  } catch (err) {
-    res.status(500).json({ message: 'Failed to update gallery item' });
+    const { title, artist, grade, category, description, award } = req.body;
+    
+    const updatedArtwork = await StudentArtwork.findByIdAndUpdate(
+      req.params.id,
+      { title, artist, grade, category, description, award },
+      { new: true, runValidators: true }
+    );
+    
+    if (!updatedArtwork) {
+      return res.status(404).json({ message: 'Artwork not found' });
+    }
+    
+    res.json({ 
+      message: 'Artwork updated successfully', 
+      artwork: updatedArtwork 
+    });
+  } catch (error) {
+    console.error('Error updating artwork:', error);
+    res.status(500).json({ message: 'Failed to update artwork' });
   }
 });
 
-// Delete
+// UPDATE - Increment views
+app.patch('/api/gallery/:id/view', async (req, res) => {
+  try {
+    const artwork = await StudentArtwork.findByIdAndUpdate(
+      req.params.id,
+      { $inc: { views: 1 } },
+      { new: true }
+    );
+    
+    if (!artwork) {
+      return res.status(404).json({ message: 'Artwork not found' });
+    }
+    
+    res.json({ views: artwork.views });
+  } catch (error) {
+    console.error('Error updating views:', error);
+    res.status(500).json({ message: 'Failed to update views' });
+  }
+});
+
+// UPDATE - Toggle like
+app.patch('/api/gallery/:id/like', async (req, res) => {
+  try {
+    const { increment } = req.body; // true to increment, false to decrement
+    
+    const artwork = await StudentArtwork.findByIdAndUpdate(
+      req.params.id,
+      { $inc: { likes: increment ? 1 : -1 } },
+      { new: true }
+    );
+    
+    if (!artwork) {
+      return res.status(404).json({ message: 'Artwork not found' });
+    }
+    
+    res.json({ likes: artwork.likes });
+  } catch (error) {
+    console.error('Error updating likes:', error);
+    res.status(500).json({ message: 'Failed to update likes' });
+  }
+});
+
+// DELETE - Delete artwork
 app.delete('/api/gallery/:id', async (req, res) => {
   try {
-    const deleted = await GalleryItem.findByIdAndDelete(req.params.id);
-    if (!deleted) return res.status(404).json({ message: 'Item not found' });
-
-    const filename = deleted.image?.split('/images/')[1];
-    if (filename && fs.existsSync(`images/${filename}`)) {
-      fs.unlinkSync(`images/${filename}`);
+    const artwork = await StudentArtwork.findByIdAndDelete(req.params.id);
+    
+    if (!artwork) {
+      return res.status(404).json({ message: 'Artwork not found' });
     }
-
-    res.json({ message: 'Gallery item deleted' });
-  } catch (err) {
-    res.status(500).json({ message: 'Failed to delete gallery item' });
+    
+    // Delete associated image file
+    if (artwork.imageUrl) {
+      const filename = artwork.imageUrl.split('/images/')[1];
+      const filePath = path.join('images', filename);
+      
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+      }
+    }
+    
+    res.json({ message: 'Artwork deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting artwork:', error);
+    res.status(500).json({ message: 'Failed to delete artwork' });
   }
 });
 
+// Error handling middleware
+app.use((error, req, res, next) => {
+  if (error instanceof multer.MulterError) {
+    if (error.code === 'LIMIT_FILE_SIZE') {
+      return res.status(400).json({ message: 'File too large. Maximum size is 5MB.' });
+    }
+  }
+  
+  if (error.message === 'Only image files are allowed') {
+    return res.status(400).json({ message: error.message });
+  }
+  
+  res.status(500).json({ message: 'Something went wrong!' });
+});
 // ========== ANNOUNCEMENTS ROUTES ==========
 
 // Create
@@ -129,40 +253,238 @@ app.delete('/api/announcements/:id', async (req, res) => {
 // ========== CONTACT ROUTES ==========
 
 // Create
+// Create
 app.post('/api/contact', async (req, res) => {
-  const { name, email, mobile, message } = req.body;
+  const { 
+    state, 
+    city, 
+    school, 
+    firstName, 
+    lastName, 
+    grade, 
+    email, 
+    mobile, 
+    address 
+  } = req.body;
 
-  if (!name || !email || !mobile || !message) {
-    return res.status(400).json({ message: 'All fields are required.' });
+  // Validation
+  if (!state || !city || !school || !firstName || !lastName || !grade || !email || !mobile || !address) {
+    return res.status(400).json({ 
+      message: 'All fields are required.',
+      required: ['state', 'city', 'school', 'firstName', 'lastName', 'grade', 'email', 'mobile', 'address']
+    });
   }
 
-  const newMessage = new ContactMessage({ name, email, mobile, message });
+  // Email validation
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(email)) {
+    return res.status(400).json({ message: 'Please enter a valid email address.' });
+  }
+
+  // Mobile validation (10 digits)
+  if (!/^\d{10}$/.test(mobile)) {
+    return res.status(400).json({ message: 'Mobile number must be exactly 10 digits.' });
+  }
+
+  const newMessage = new ContactMessage({
+    state,
+    city,
+    school,
+    firstName,
+    lastName,
+    grade,
+    email,
+    mobile,
+    address
+  });
 
   try {
     await newMessage.save();
-    res.status(201).json({ message: 'Message received successfully.' });
+    res.status(201).json({ 
+      message: 'Enquiry submitted successfully. We will contact you soon.',
+      data: {
+        id: newMessage._id,
+        firstName: newMessage.firstName,
+        lastName: newMessage.lastName,
+        email: newMessage.email,
+        createdAt: newMessage.createdAt
+      }
+    });
   } catch (err) {
-    res.status(500).json({ message: 'Server error.' });
+    console.error('Error saving enquiry:', err);
+    res.status(500).json({ message: 'Server error. Please try again later.' });
   }
 });
 
-// Read
+// READ - Get all enquiries (with pagination and filtering)
 app.get('/api/contact', async (req, res) => {
-  const messages = await ContactMessage.find({});
-  res.json(messages);
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const skip = (page - 1) * limit;
+
+    // Optional filters
+    const filters = {};
+    if (req.query.state) filters.state = req.query.state;
+    if (req.query.city) filters.city = req.query.city;
+    if (req.query.school) filters.school = req.query.school;
+    if (req.query.grade) filters.grade = req.query.grade;
+
+    const messages = await ContactMessage.find(filters)
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit);
+
+    const total = await ContactMessage.countDocuments(filters);
+
+    res.json({
+      messages,
+      pagination: {
+        currentPage: page,
+        totalPages: Math.ceil(total / limit),
+        totalMessages: total,
+        hasNext: page < Math.ceil(total / limit),
+        hasPrev: page > 1
+      }
+    });
+  } catch (err) {
+    console.error('Error fetching enquiries:', err);
+    res.status(500).json({ message: 'Server error while fetching enquiries.' });
+  }
 });
 
-// Delete
+// READ - Get single enquiry by ID
+app.get('/api/contact/:id', async (req, res) => {
+  try {
+    const message = await ContactMessage.findById(req.params.id);
+    if (!message) {
+      return res.status(404).json({ message: 'Enquiry not found' });
+    }
+    res.json(message);
+  } catch (err) {
+    console.error('Error fetching enquiry:', err);
+    res.status(500).json({ message: 'Server error while fetching enquiry.' });
+  }
+});
+
+// UPDATE - Update enquiry status or details
+app.put('/api/contact/:id', async (req, res) => {
+  try {
+    const allowedUpdates = ['status', 'notes', 'followUpDate'];
+    const updates = {};
+    
+    allowedUpdates.forEach(field => {
+      if (req.body[field] !== undefined) {
+        updates[field] = req.body[field];
+      }
+    });
+
+    const message = await ContactMessage.findByIdAndUpdate(
+      req.params.id,
+      { ...updates, updatedAt: new Date() },
+      { new: true, runValidators: true }
+    );
+
+    if (!message) {
+      return res.status(404).json({ message: 'Enquiry not found' });
+    }
+
+    res.json({ message: 'Enquiry updated successfully', data: message });
+  } catch (err) {
+    console.error('Error updating enquiry:', err);
+    res.status(500).json({ message: 'Failed to update enquiry' });
+  }
+});
+
+// DELETE - Delete enquiry
 app.delete('/api/contact/:id', async (req, res) => {
   try {
     const deleted = await ContactMessage.findByIdAndDelete(req.params.id);
-    if (!deleted) return res.status(404).json({ message: 'Message not found' });
-    res.json({ message: 'Message deleted' });
+    if (!deleted) {
+      return res.status(404).json({ message: 'Enquiry not found' });
+    }
+    res.json({ message: 'Enquiry deleted successfully' });
   } catch (err) {
-    res.status(500).json({ message: 'Failed to delete message' });
+    console.error('Error deleting enquiry:', err);
+    res.status(500).json({ message: 'Failed to delete enquiry' });
   }
 });
 
+// ANALYTICS - Get enquiry statistics
+app.get('/api/contact/analytics/stats', async (req, res) => {
+  try {
+    const totalEnquiries = await ContactMessage.countDocuments();
+    
+    const gradeStats = await ContactMessage.aggregate([
+      { $group: { _id: '$grade', count: { $sum: 1 } } },
+      { $sort: { count: -1 } }
+    ]);
+
+    const schoolStats = await ContactMessage.aggregate([
+      { $group: { _id: '$school', count: { $sum: 1 } } },
+      { $sort: { count: -1 } }
+    ]);
+
+    const cityStats = await ContactMessage.aggregate([
+      { $group: { _id: '$city', count: { $sum: 1 } } },
+      { $sort: { count: -1 } }
+    ]);
+
+    // Monthly enquiries for the last 6 months
+    const sixMonthsAgo = new Date();
+    sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+
+    const monthlyStats = await ContactMessage.aggregate([
+      { $match: { createdAt: { $gte: sixMonthsAgo } } },
+      {
+        $group: {
+          _id: {
+            year: { $year: '$createdAt' },
+            month: { $month: '$createdAt' }
+          },
+          count: { $sum: 1 }
+        }
+      },
+      { $sort: { '_id.year': 1, '_id.month': 1 } }
+    ]);
+
+    res.json({
+      totalEnquiries,
+      gradeStats,
+      schoolStats,
+      cityStats,
+      monthlyStats
+    });
+  } catch (err) {
+    console.error('Error fetching analytics:', err);
+    res.status(500).json({ message: 'Server error while fetching analytics.' });
+  }
+});
+
+// BULK OPERATIONS - Export enquiries to CSV
+app.get('/api/contact/export/csv', async (req, res) => {
+  try {
+    const messages = await ContactMessage.find({}).sort({ createdAt: -1 });
+    
+    // Create CSV header
+    const csvHeader = 'Date,First Name,Last Name,Email,Mobile,State,City,School,Grade,Address\n';
+    
+    // Create CSV rows
+    const csvRows = messages.map(msg => {
+      const date = new Date(msg.createdAt).toLocaleDateString();
+      return `"${date}","${msg.firstName}","${msg.lastName}","${msg.email}","${msg.mobile}","${msg.state}","${msg.city}","${msg.school}","${msg.grade}","${msg.address}"`;
+    }).join('\n');
+    
+    const csvContent = csvHeader + csvRows;
+    
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', 'attachment; filename=enquiries.csv');
+    res.send(csvContent);
+  } catch (err) {
+    console.error('Error exporting CSV:', err);
+    res.status(500).json({ message: 'Failed to export enquiries' });
+  }
+});
 
 app.post('/api/slides', upload.single('image'), async (req, res) => {
   try {
@@ -300,6 +622,86 @@ app.delete('/api/artworks/:id', async (req, res) => {
   }
 });
 
+
+
+app.post('/api/journeys', upload.single('image'), async (req, res) => {
+  try {
+    const { title, description, label, bgColor, textColor } = req.body;
+
+    const journey = new Journey({
+      title,
+      description,
+      label,
+      bgColor,
+      textColor,
+      imageUrl: `${process.env.BASE_URL}/images/${req.file.filename}`
+    });
+
+    await journey.save();
+    res.status(201).json(journey);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 🔹 READ All
+app.get('/api/journeys', async (req, res) => {
+  try {
+    const journeys = await Journey.find().sort({ createdAt: -1 });
+    res.json(journeys);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 🔹 UPDATE
+app.put('/api/journeys/:id', upload.single('image'), async (req, res) => {
+  try {
+    const journey = await Journey.findById(req.params.id);
+    if (!journey) return res.status(404).json({ message: 'Journey not found' });
+
+    if (req.file) {
+      // Delete old image
+      if (journey.imageUrl) {
+        const oldPath = path.join(__dirname, '../images', path.basename(journey.imageUrl));
+        if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
+      }
+    }
+
+    const updatedData = {
+      title: req.body.title || journey.title,
+      description: req.body.description || journey.description,
+      label: req.body.label || journey.label,
+      bgColor: req.body.bgColor || journey.bgColor,
+      textColor: req.body.textColor || journey.textColor,
+      imageUrl: req.file ? `${process.env.BASE_URL}/images/${req.file.filename}` : journey.imageUrl
+    };
+
+    const updated = await Journey.findByIdAndUpdate(req.params.id, updatedData, { new: true });
+    res.json(updated);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 🔹 DELETE
+app.delete('/api/journeys/:id', async (req, res) => {
+  try {
+    const journey = await Journey.findById(req.params.id);
+    if (!journey) return res.status(404).json({ message: 'Journey not found' });
+
+    // Delete image
+    if (journey.imageUrl) {
+      const imagePath = path.join(__dirname, '../images', path.basename(journey.imageUrl));
+      if (fs.existsSync(imagePath)) fs.unlinkSync(imagePath);
+    }
+
+    await Journey.findByIdAndDelete(req.params.id);
+    res.json({ message: 'Journey deleted' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 // ========== START SERVER ==========
 app.listen(PORT, () => {
   console.log(`Server running on ${process.env.BASE_URL}`);
