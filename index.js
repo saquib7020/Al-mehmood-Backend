@@ -643,6 +643,8 @@ app.post('/api/journeys', upload.single('image'), async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+app.get('/', (req, res) => res.send('Server is working'));
+
 
 // 🔹 READ All
 app.get('/api/journeys', async (req, res) => {

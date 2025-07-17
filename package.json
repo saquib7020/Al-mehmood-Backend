@@ -1,4 +1,9 @@
+
 {
+
+  "scripts": {
+  "start": "node index.js"
+},
   "dependencies": {
     "compression": "^1.8.0",
     "cors": "^2.8.5",
